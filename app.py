@@ -1,3 +1,4 @@
+import re
 import streamlit as st
 import xmlrpc.client
 import os
@@ -542,7 +543,9 @@ if 'excel_data' not in st.session_state:
 if 'selected_damaged_lots' not in st.session_state:
     st.session_state.selected_damaged_lots = []
 if 'select_all_damaged' not in st.session_state:
-    st.session_state.select_all_damaged = False
+    st.session_state.select_all_damaged = False  # ✅ Add this line
+if 'lot_details' not in st.session_state:
+    st.session_state.lot_details = {}
 if 'lot_po_mapping' not in st.session_state:
     st.session_state.lot_po_mapping = {}
 
@@ -561,8 +564,151 @@ def connect_to_odoo():
     except Exception as e:
         return False, f"Connection failed: {str(e)}"
 
+def get_product_details(lot_name):
+    """Get detailed product information for a specific lot/serial number"""
+    try:
+        # Find the move line for this lot
+        move_lines = st.session_state.models.execute_kw(
+            CONFIG['db'], st.session_state.uid, CONFIG['password'],
+            'stock.move.line', 'search_read',
+            [[('lot_id.name', '=', lot_name)]],
+            {'fields': ['picking_id', 'product_id'], 'limit': 1}
+        )
+        
+        if not move_lines:
+            return None
+            
+        product_id = move_lines[0]['product_id'][0] if move_lines[0].get('product_id') else None
+        picking_id = move_lines[0]['picking_id'][0] if move_lines[0].get('picking_id') else None
+        
+        if not product_id or not picking_id:
+            return None
+        
+        # Get product details
+        product = st.session_state.models.execute_kw(
+            CONFIG['db'], st.session_state.uid, CONFIG['password'],
+            'product.product', 'read',
+            [product_id], {'fields': ['name', 'default_code', 'product_tmpl_id']}
+        )
+        
+        if not product:
+            return None
+            
+        # Get picking details (reference/name)
+        picking = st.session_state.models.execute_kw(
+            CONFIG['db'], st.session_state.uid, CONFIG['password'],
+            'stock.picking', 'read',
+            [picking_id], {'fields': ['name', 'origin']}
+        )
+        
+        if not picking:
+            return None
+            
+        po_number = picking[0].get('origin', 'Not Found')
+        reference = picking[0].get('name', 'Not Found')
+        
+        # Get purchase order details
+        po_details = None
+        if po_number and po_number != 'Not Found':
+            po_records = st.session_state.models.execute_kw(
+                CONFIG['db'], st.session_state.uid, CONFIG['password'],
+                'purchase.order', 'search_read',
+                [[('name', '=', po_number)]],
+                {'fields': ['partner_id'], 'limit': 1}
+            )
+            
+            if po_records:
+                vendor_id = po_records[0].get('partner_id')[0] if po_records[0].get('partner_id') else None
+                
+                # Get vendor name
+                if vendor_id:
+                    vendor = st.session_state.models.execute_kw(
+                        CONFIG['db'], st.session_state.uid, CONFIG['password'],
+                        'res.partner', 'read',
+                        [vendor_id], {'fields': ['name']}
+                    )
+                    vendor_name = vendor[0].get('name', 'Not Found') if vendor else 'Not Found'
+                else:
+                    vendor_name = 'Not Found'
+                
+                # Get purchase order line details (price, discount)
+                po_lines = st.session_state.models.execute_kw(
+                    CONFIG['db'], st.session_state.uid, CONFIG['password'],
+                    'purchase.order.line', 'search_read',
+                    [[('order_id.name', '=', po_number), ('product_id', '=', product_id)]],
+                    {'fields': ['price_unit', 'discount']}
+                )
+                
+                if po_lines:
+                    price_unit = po_lines[0].get('price_unit', 0)
+                    discount = po_lines[0].get('discount', 0)
+                    cost_price = price_unit * (1 - discount/100)
+                else:
+                    price_unit = 0
+                    discount = 0
+                    cost_price = 0
+                
+                po_details = {
+                    'po_number': po_number,
+                    'vendor': vendor_name,
+                    'price_unit': price_unit,
+                    'discount': discount,
+                    'cost_price': cost_price
+                }
+        
+        # Get product template for SKU
+        product_template = None
+        if product[0].get('product_tmpl_id'):
+            template_id = product[0]['product_tmpl_id'][0]
+            template = st.session_state.models.execute_kw(
+                CONFIG['db'], st.session_state.uid, CONFIG['password'],
+                'product.template', 'read',
+                [template_id], {'fields': ['name']}
+            )
+            if template:
+                product_template = template[0].get('name', 'Not Found')
+        
+        # Get location information
+        quant_records = st.session_state.models.execute_kw(
+            CONFIG['db'], st.session_state.uid, CONFIG['password'],
+            'stock.quant', 'search_read',
+            [[('lot_id.name', '=', lot_name)]],
+            {'fields': ['location_id']}
+        )
+        
+        locations = []
+        if quant_records:
+            for q in quant_records:
+                if q.get('location_id'):
+                    locations.append(q['location_id'][1])
+        
+        product_name = product[0].get('name', 'Not Found')
+        sku = product[0].get('default_code')
+
+        if not sku or sku.lower() == "false" or sku.strip() == "":
+            match = re.search(r'\s(\S+)$', product_name)
+            if match:
+                sku = match.group(1)
+            else:
+                sku = "Not Found"
+
+        return {
+            'lot_name': lot_name,
+            'product_name': product_name,
+            'sku': sku,
+            'product_template': product_template,
+            'reference': reference,
+            'locations': locations,
+            'discount': po_details.get('discount', 0) if po_details else 0,
+            'po_details': po_details
+        }
+        
+    except Exception as e:
+        st.error(f"Error getting product details for {lot_name}: {str(e)}")
+        return None
+
 def check_inventory(lot_serials):
-    """Check if lot/serial numbers are in damage stock"""
+    """Check if lot/serial numbers are in damage stock with detailed information"""
     not_in_damage_stock = []
     in_damage_stock = []
     
@@ -576,7 +722,10 @@ def check_inventory(lot_serials):
     for lot in [ls.strip() for ls in lot_serials if ls.strip()]:
         processed += 1
         progress_bar.progress(processed / total_lots)
-        status_text.text(f"🔍 Processing {processed} of {total_lots} lots...")
+        status_text.text(f"Processing {processed} of {total_lots} lots...")
+        
+        # Get detailed product information
+        product_details = get_product_details(lot)
         
         quant_records = st.session_state.models.execute_kw(
             CONFIG['db'], st.session_state.uid, CONFIG['password'],
@@ -587,25 +736,34 @@ def check_inventory(lot_serials):
 
         if quant_records:
             found_in_damage = any(q['location_id'][1] == CONFIG['damage_location_name'] for q in quant_records)
+            
+            # Get all locations for this lot
+            locations = {q['location_id'][1] for q in quant_records if q['location_id']}
+            
             if not found_in_damage:
-                # Get all locations for this lot
-                locations = {q['location_id'][1] for q in quant_records if q['location_id']}
                 not_in_damage_stock.append({
                     'lot': lot, 
                     'location': ", ".join(locations) if locations else "Unknown",
-                    'status': 'Not in Damage'
+                    'status': 'Not in Damage',
+                    'details': product_details
                 })
             else:
                 in_damage_stock.append({
                     'lot': lot,
                     'location': CONFIG['damage_location_name'],
-                    'status': 'In Damage'
+                    'status': 'In Damage',
+                    'details': product_details
                 })
+                
+                # Store details in session state for later use
+                if product_details:
+                    st.session_state.lot_details[lot] = product_details
         else:
             not_in_damage_stock.append({
                 'lot': lot, 
                 'location': "Not Found in stock.quant",
-                'status': 'Not Found'
+                'status': 'Not Found',
+                'details': product_details
             })
     
     progress_bar.empty()
@@ -642,23 +800,29 @@ def get_po_for_lot(lot_name):
         return f"Error: {str(e)}"
 
 def process_product_return(lot_serials):
-    """Process product return for given lot/serial numbers with individual PO handling"""
+    """Process product return for given lot/serial numbers with individual PO handling.
+    Returns results with PO, Picking ID, and Returned Reference (stock.picking name).
+    """
     unique_lots = list(set(lot_serials))  # Ensure no duplicates
 
     if not unique_lots:
         return False, "No Lot/Serial numbers entered."
 
     # Fetch Company ID
-    company_id = st.session_state.models.execute_kw(CONFIG['db'], st.session_state.uid, CONFIG['password'],
+    company_id = st.session_state.models.execute_kw(
+        CONFIG['db'], st.session_state.uid, CONFIG['password'],
         'res.company', 'search_read',
         [[['name', '=', CONFIG['hq_company_name']]]],
-        {'fields': ['id'], 'limit': 1})[0]['id']
+        {'fields': ['id'], 'limit': 1}
+    )[0]['id']
 
     # Find Damage/Stock Location
-    damage_location = st.session_state.models.execute_kw(CONFIG['db'], st.session_state.uid, CONFIG['password'],
+    damage_location = st.session_state.models.execute_kw(
+        CONFIG['db'], st.session_state.uid, CONFIG['password'],
         'stock.location', 'search_read',
         [[['complete_name', 'ilike', 'Damge/Stock'], ['company_id', '=', company_id]]],
-        {'fields': ['id'], 'limit': 1})
+        {'fields': ['id'], 'limit': 1}
+    )
     if not damage_location:
         return False, "Damage/Stock location not found"
     damage_location_id = damage_location[0]['id']
@@ -670,27 +834,28 @@ def process_product_return(lot_serials):
         if po_number not in po_lot_map:
             po_lot_map[po_number] = []
         po_lot_map[po_number].append(lot)
-    
+
     # Process returns for each PO group
     results = {}
     for po_number, lots in po_lot_map.items():
         if po_number.startswith("Error:") or po_number == "Not Found":
-            # Skip lots with no PO or error
             for lot in lots:
                 results[lot] = {
                     'success': False,
                     'message': f"Cannot process return: {po_number}"
                 }
             continue
-            
+
         # Find Pickings linked to these Lots for this PO
-        lot_quants = st.session_state.models.execute_kw(CONFIG['db'], st.session_state.uid, CONFIG['password'],
+        lot_quants = st.session_state.models.execute_kw(
+            CONFIG['db'], st.session_state.uid, CONFIG['password'],
             'stock.quant', 'search_read',
             [[
                 ['company_id', '=', company_id],
                 ['lot_id.name', 'in', lots]
             ]],
-            {'fields': ['id', 'lot_id', 'product_id', 'location_id']})
+            {'fields': ['id', 'lot_id', 'product_id', 'location_id']}
+        )
 
         if not lot_quants:
             for lot in lots:
@@ -701,11 +866,13 @@ def process_product_return(lot_serials):
             continue
 
         # Find picking for this PO
-        picking_records = st.session_state.models.execute_kw(CONFIG['db'], st.session_state.uid, CONFIG['password'],
+        picking_records = st.session_state.models.execute_kw(
+            CONFIG['db'], st.session_state.uid, CONFIG['password'],
             'stock.picking', 'search_read',
             [[['origin', '=', po_number]]],
-            {'fields': ['id'], 'limit': 1})
-            
+            {'fields': ['id'], 'limit': 1}
+        )
+
         if not picking_records:
             for lot in lots:
                 results[lot] = {
@@ -713,24 +880,30 @@ def process_product_return(lot_serials):
                     'message': f"No picking found for PO: {po_number}"
                 }
             continue
-            
+
         picking_id = picking_records[0]['id']
 
         # Create Return Wizard
-        wizard_id = st.session_state.models.execute_kw(CONFIG['db'], st.session_state.uid, CONFIG['password'],
-            'stock.return.picking', 'create', [{'picking_id': picking_id}])
+        wizard_id = st.session_state.models.execute_kw(
+            CONFIG['db'], st.session_state.uid, CONFIG['password'],
+            'stock.return.picking', 'create', [{'picking_id': picking_id}]
+        )
 
-        # Get Return Lines (wizard)
-        return_lines = st.session_state.models.execute_kw(CONFIG['db'], st.session_state.uid, CONFIG['password'],
+        # Get Return Lines
+        return_lines = st.session_state.models.execute_kw(
+            CONFIG['db'], st.session_state.uid, CONFIG['password'],
             'stock.return.picking.line', 'search_read',
             [[['wizard_id', '=', wizard_id]]],
-            {'fields': ['id', 'product_id', 'quantity', 'move_id']})
+            {'fields': ['id', 'product_id', 'quantity', 'move_id']}
+        )
 
-        # Map Input Lots -> Product using move lines of original picking
-        move_lines = st.session_state.models.execute_kw(CONFIG['db'], st.session_state.uid, CONFIG['password'],
+        # Map Input Lots -> Product using move lines
+        move_lines = st.session_state.models.execute_kw(
+            CONFIG['db'], st.session_state.uid, CONFIG['password'],
             'stock.move.line', 'search_read',
             [[['picking_id', '=', picking_id], ['lot_id.name', 'in', lots]]],
-            {'fields': ['id', 'product_id', 'lot_id', 'qty_done']})
+            {'fields': ['id', 'product_id', 'lot_id', 'qty_done']}
+        )
 
         product_lot_map = {}
         lot_quant_map = {}
@@ -745,19 +918,24 @@ def process_product_return(lot_serials):
         for line in return_lines:
             product_id = line['product_id'][0]
             qty = len(product_lot_map.get(product_id, []))
-            st.session_state.models.execute_kw(CONFIG['db'], st.session_state.uid, CONFIG['password'],
+            st.session_state.models.execute_kw(
+                CONFIG['db'], st.session_state.uid, CONFIG['password'],
                 'stock.return.picking.line', 'write',
-                [[line['id']], {'quantity': qty}])
+                [[line['id']], {'quantity': qty}]
+            )
 
         # Confirm Return
-        new_picking_info = st.session_state.models.execute_kw(CONFIG['db'], st.session_state.uid, CONFIG['password'],
-            'stock.return.picking', 'create_returns', [wizard_id])
+        new_picking_info = st.session_state.models.execute_kw(
+            CONFIG['db'], st.session_state.uid, CONFIG['password'],
+            'stock.return.picking', 'create_returns', [wizard_id]
+        )
 
         new_picking_id = None
         if isinstance(new_picking_info, dict) and 'res_id' in new_picking_info:
             new_picking_id = new_picking_info['res_id']
         elif isinstance(new_picking_info, list) and len(new_picking_info) > 0:
             new_picking_id = new_picking_info[0]
+
         if not new_picking_id:
             for lot in lots:
                 results[lot] = {
@@ -766,35 +944,54 @@ def process_product_return(lot_serials):
                 }
             continue
 
-        # Set Picking Source to Damage/Stock
-        st.session_state.models.execute_kw(CONFIG['db'], st.session_state.uid, CONFIG['password'],
-            'stock.picking', 'write',
-            [[new_picking_id], {'location_id': damage_location_id}])
+        # Fetch the returned reference (picking name)
+        picking_data = st.session_state.models.execute_kw(
+            CONFIG['db'], st.session_state.uid, CONFIG['password'],
+            'stock.picking', 'read',
+            [new_picking_id],
+            {'fields': ['name']}
+        )[0]
+        returned_reference = picking_data.get('name', 'N/A')
 
-        # Update moves with demand
-        moves = st.session_state.models.execute_kw(CONFIG['db'], st.session_state.uid, CONFIG['password'],
+        # Set Picking Source to Damage/Stock
+        st.session_state.models.execute_kw(
+            CONFIG['db'], st.session_state.uid, CONFIG['password'],
+            'stock.picking', 'write',
+            [[new_picking_id], {'location_id': damage_location_id}]
+        )
+
+        # Update moves
+        moves = st.session_state.models.execute_kw(
+            CONFIG['db'], st.session_state.uid, CONFIG['password'],
             'stock.move', 'search_read',
             [[['picking_id', '=', new_picking_id]]],
-            {'fields': ['id', 'product_id', 'product_uom_qty']})
+            {'fields': ['id', 'product_id', 'product_uom_qty']}
+        )
 
         product_move_map = {m['product_id'][0]: m['id'] for m in moves if m.get('product_id')}
 
         for m in moves:
             pid = m['product_id'][0]
             qty = len(product_lot_map.get(pid, []))
-            st.session_state.models.execute_kw(CONFIG['db'], st.session_state.uid, CONFIG['password'],
+            st.session_state.models.execute_kw(
+                CONFIG['db'], st.session_state.uid, CONFIG['password'],
                 'stock.move', 'write',
-                [[m['id']], {'location_id': damage_location_id, 'product_uom_qty': qty}])
+                [[m['id']], {'location_id': damage_location_id, 'product_uom_qty': qty}]
+            )
 
         # Clear existing move lines
-        existing_ml = st.session_state.models.execute_kw(CONFIG['db'], st.session_state.uid, CONFIG['password'],
+        existing_ml = st.session_state.models.execute_kw(
+            CONFIG['db'], st.session_state.uid, CONFIG['password'],
             'stock.move.line', 'search',
-            [[['picking_id', '=', new_picking_id]]])
+            [[['picking_id', '=', new_picking_id]]]
+        )
         if existing_ml:
-            st.session_state.models.execute_kw(CONFIG['db'], st.session_state.uid, CONFIG['password'],
-                'stock.move.line', 'unlink', [existing_ml])
+            st.session_state.models.execute_kw(
+                CONFIG['db'], st.session_state.uid, CONFIG['password'],
+                'stock.move.line', 'unlink', [existing_ml]
+            )
 
-        # Create new move lines per lot
+        # Create new move lines
         for lot in lots:
             ml = lot_quant_map.get(lot)
             if not ml:
@@ -803,7 +1000,7 @@ def process_product_return(lot_serials):
                     'message': f"No move line found for lot: {lot}"
                 }
                 continue
-                
+
             pid = ml['product_id'][0]
             move_id = product_move_map.get(pid)
             if not move_id:
@@ -812,9 +1009,10 @@ def process_product_return(lot_serials):
                     'message': f"No move found for product ID: {pid}"
                 }
                 continue
-                
+
             try:
-                st.session_state.models.execute_kw(CONFIG['db'], st.session_state.uid, CONFIG['password'],
+                st.session_state.models.execute_kw(
+                    CONFIG['db'], st.session_state.uid, CONFIG['password'],
                     'stock.move.line', 'create',
                     [{
                         'picking_id': new_picking_id,
@@ -823,12 +1021,14 @@ def process_product_return(lot_serials):
                         'location_id': damage_location_id,
                         'lot_id': ml['lot_id'][0],
                         'qty_done': 1,
-                    }])
-                
+                    }]
+                )
+
                 results[lot] = {
                     'success': True,
                     'po_number': po_number,
                     'new_picking_id': new_picking_id,
+                    'returned_reference': returned_reference,  # ✅ Added
                     'message': "Return successfully processed"
                 }
             except Exception as e:
@@ -840,17 +1040,17 @@ def process_product_return(lot_serials):
     # Count successes and failures
     success_count = sum(1 for r in results.values() if r['success'])
     failure_count = len(results) - success_count
-    
-    # Prepare overall result
+
     overall_success = success_count > 0
     message = f"Processed {success_count} lots successfully, {failure_count} failed"
-    
+
     return overall_success, {
         "results": results,
         "success_count": success_count,
         "failure_count": failure_count,
         "message": message
     }
+
 
 def create_excel_report(non_damaged, damaged, approved, rejected, processed):
     """Create an Excel report with all the inventory data organized by sections"""
@@ -868,7 +1068,7 @@ def create_excel_report(non_damaged, damaged, approved, rejected, processed):
             'bold': True,
             'text_wrap': True,
             'valign': 'top',
-            'fg_color': '#667eea',
+            'fg_color': '#1f77b4',
             'font_color': 'white',
             'border': 1
         })
@@ -933,7 +1133,25 @@ def create_excel_report(non_damaged, damaged, approved, rejected, processed):
         
         # Non-Damaged Items sheet
         if non_damaged:
-            non_damaged_df = pd.DataFrame(non_damaged)
+            non_damaged_data = []
+            for item in non_damaged:
+                details = item.get('details', {})
+                po_details = details.get('po_details', {}) if details else {}
+                
+                non_damaged_data.append({
+                    'lot': item['lot'],
+                    'location': item['location'],
+                    'status': item['status'],
+                    'reference': details.get('reference', 'N/A') if details else 'N/A',
+                    'product_name': details.get('product_name', 'N/A') if details else 'N/A',
+                    'sku': details.get('sku', 'N/A') if details else 'N/A',
+                    'vendor': po_details.get('vendor', 'N/A') if po_details else 'N/A',
+                    'price_unit': po_details.get('price_unit', 0) if po_details else 0,
+                    'discount': po_details.get('discount', 0) if po_details else 0,
+                    'cost_price': po_details.get('cost_price', 0) if po_details else 0
+                })
+            
+            non_damaged_df = pd.DataFrame(non_damaged_data)
             non_damaged_df.to_excel(writer, sheet_name='Non-Damaged Items', index=False)
             worksheet = writer.sheets['Non-Damaged Items']
             for col_num, value in enumerate(non_damaged_df.columns.values):
@@ -950,8 +1168,9 @@ def create_excel_report(non_damaged, damaged, approved, rejected, processed):
         if damaged:
             damaged_data = []
             for item in damaged:
+                details = item.get('details', {})
+                po_details = details.get('po_details', {}) if details else {}
                 lot = item['lot']
-                po_number = st.session_state.lot_po_mapping.get(lot, "Not Found")
                 
                 if lot in processed:
                     status = 'Return Processed'
@@ -965,8 +1184,14 @@ def create_excel_report(non_damaged, damaged, approved, rejected, processed):
                 damaged_data.append({
                     'lot': lot,
                     'location': item['location'],
-                    'po_number': po_number,
-                    'status': status
+                    'status': status,
+                    'reference': details.get('reference', 'N/A') if details else 'N/A',
+                    'product_name': details.get('product_name', 'N/A') if details else 'N/A',
+                    'sku': details.get('sku', 'N/A') if details else 'N/A',
+                    'vendor': po_details.get('vendor', 'N/A') if po_details else 'N/A',
+                    'price_unit': po_details.get('price_unit', 0) if po_details else 0,
+                    'discount': po_details.get('discount', 0) if po_details else 0,
+                    'cost_price': po_details.get('cost_price', 0) if po_details else 0
                 })
             
             damaged_df = pd.DataFrame(damaged_data)
@@ -986,14 +1211,25 @@ def create_excel_report(non_damaged, damaged, approved, rejected, processed):
         if processed:
             processed_data = []
             for lot, details in processed.items():
+                lot_details = st.session_state.lot_details.get(lot, {})
+                po_details = lot_details.get('po_details', {}) if lot_details else {}
+                
                 processed_data.append({
                     'lot': lot,
                     'po_number': details.get('po_number', 'N/A'),
                     'picking_id': details.get('new_picking_id', 'N/A'),
                     'status': 'Return Processed',
-                    'timestamp': details.get('timestamp', 'N/A')
-                })
-            
+                    'timestamp': details.get('timestamp', 'N/A'),
+                    'product_name': lot_details.get('product_name', 'N/A') if lot_details else 'N/A',
+                    'sku': lot_details.get('sku', 'N/A') if lot_details else 'N/A',
+                    'vendor': po_details.get('vendor', 'N/A') if po_details else 'N/A',
+                    'reference': lot_details.get('reference', 'N/A') if lot_details else 'N/A',
+                    'returned_reference': details.get('returned_reference', 'N/A'),
+                    'price_unit': po_details.get('price_unit', 0) if po_details else 0,
+                    'discount': po_details.get('discount', 0) if po_details else 0,
+                    'cost_price': po_details.get('cost_price', 0) if po_details else 0
+                })            
+
             processed_df = pd.DataFrame(processed_data)
             processed_df.to_excel(writer, sheet_name='Processed Returns', index=False)
             worksheet = writer.sheets['Processed Returns']
@@ -1009,7 +1245,23 @@ def create_excel_report(non_damaged, damaged, approved, rejected, processed):
         
         # Approved Lots sheet
         if approved:
-            approved_data = [{'lot': lot, 'status': 'Approved for Return'} for lot in approved]
+            approved_data = []
+            for lot in approved:
+                lot_details = st.session_state.lot_details.get(lot, {})
+                po_details = lot_details.get('po_details', {}) if lot_details else {}
+                
+                approved_data.append({
+                    'lot': lot,
+                    'status': 'Approved for Return',
+                    'reference': lot_details.get('reference', 'N/A') if lot_details else 'N/A',
+                    'product_name': lot_details.get('product_name', 'N/A') if lot_details else 'N/A',
+                    'sku': lot_details.get('sku', 'N/A') if lot_details else 'N/A',
+                    'vendor': po_details.get('vendor', 'N/A') if po_details else 'N/A',
+                    'price_unit': po_details.get('price_unit', 0) if po_details else 0,
+                    'discount': po_details.get('discount', 0) if po_details else 0,
+                    'cost_price': po_details.get('cost_price', 0) if po_details else 0
+                })
+            
             approved_df = pd.DataFrame(approved_data)
             approved_df.to_excel(writer, sheet_name='Approved Lots', index=False)
             worksheet = writer.sheets['Approved Lots']
@@ -1025,7 +1277,23 @@ def create_excel_report(non_damaged, damaged, approved, rejected, processed):
         
         # Rejected Lots sheet
         if rejected:
-            rejected_data = [{'lot': lot, 'status': 'Rejected for Return'} for lot in rejected]
+            rejected_data = []
+            for lot in rejected:
+                lot_details = st.session_state.lot_details.get(lot, {})
+                po_details = lot_details.get('po_details', {}) if lot_details else {}
+                
+                rejected_data.append({
+                    'lot': lot,
+                    'status': 'Rejected for Return',
+                    'reference': lot_details.get('reference', 'N/A') if lot_details else 'N/A',
+                    'product_name': lot_details.get('product_name', 'N/A') if lot_details else 'N/A',
+                    'sku': lot_details.get('sku', 'N/A') if lot_details else 'N/A',
+                    'vendor': po_details.get('vendor', 'N/A') if po_details else 'N/A',
+                    'price_unit': po_details.get('price_unit', 0) if po_details else 0,
+                    'discount': po_details.get('discount', 0) if po_details else 0,
+                    'cost_price': po_details.get('cost_price', 0) if po_details else 0
+                })
+            
             rejected_df = pd.DataFrame(rejected_data)
             rejected_df.to_excel(writer, sheet_name='Rejected Lots', index=False)
             worksheet = writer.sheets['Rejected Lots']
@@ -1039,7 +1307,8 @@ def create_excel_report(non_damaged, damaged, approved, rejected, processed):
                 ) + 2
                 worksheet.set_column(i, i, max_len)
     
-    # Return the Excel file data
+    # Get the Excel file data
+    output.seek(0)
     return output.getvalue()
 
 def create_visualization_charts(non_damaged, damaged, approved, rejected, processed):
@@ -1182,18 +1451,38 @@ with st.sidebar:
     
     if not st.session_state.authenticated:
         st.markdown("### Please log in to continue")
-        username = st.text_input("👤 Username", placeholder="Enter your username")
-        password = st.text_input("🔒 Password", type="password", placeholder="Enter your password")
         
+        # Create a form for login (allows Enter key submission)
+        with st.form(key="login_form"):
+            username = st.text_input(
+                "👤 Username", 
+                placeholder="Enter your username", 
+                key="username_input",
+                autocomplete="username"
+            )
+            password = st.text_input(
+                "🔒 Password", 
+                type="password", 
+                placeholder="Enter your password", 
+                key="password_input",
+                autocomplete="current-password"
+            )
+            
+            # Form submit button (responds to Enter key)
+            login_submitted = st.form_submit_button("🚀 Login", use_container_width=True)
+            
+            # Handle form submission
+            if login_submitted:
+                if username == CONFIG['app_username'] and password == CONFIG['app_password']:
+                    st.session_state.authenticated = True
+                    st.success("✅ Login successful!")
+                    time.sleep(1)
+                    st.rerun()
+                else:
+                    st.error("❌ Invalid credentials")
         
-        if st.button("🚀 Login", use_container_width=True):
-            if username == CONFIG['app_username'] and password == CONFIG['app_password']:
-                st.session_state.authenticated = True
-                st.success("✅ Login successful!")
-                time.sleep(1)
-                st.rerun()
-            else:
-                st.error("❌ Invalid credentials")
+        # Add user instruction
+        st.caption("💡 Tip: Press Enter after typing your password to login quickly")
         
         
     else:
@@ -1442,8 +1731,27 @@ else:
                     st.markdown(f"**{len(non_damaged)}** items are not in damage stock")
                     
                     with st.expander("🔍 View Details", expanded=True):
-                        non_damaged_df = pd.DataFrame(non_damaged)
+                        non_damaged_data = []
+                        for item in non_damaged:
+                            details = item.get('details', {})
+                            po_details = details.get('po_details', {}) if details else {}
+
+                            non_damaged_data.append({
+                                'Lot/Serial': item['lot'],
+                                'Location': item['location'],
+                                'Status': item['status'],
+                                'Reference': details.get('reference', 'N/A') if details else 'N/A',
+                                'Product': details.get('product_name', 'N/A') if details else 'N/A',
+                                'SKU': details.get('sku', 'N/A') if details else 'N/A',
+                                'Vendor': po_details.get('vendor', 'N/A') if po_details else 'N/A',
+                                'Price': f"${po_details.get('price_unit', 0):.2f}",
+                                'Discount': f"{po_details.get('discount', 0)}%" if po_details.get('discount', 0) else "0%",
+                                'Cost Price': f"${po_details.get('cost_price', 0):.2f}",
+                            })
+
+                        non_damaged_df = pd.DataFrame(non_damaged_data)
                         st.dataframe(non_damaged_df, use_container_width=True, height=300)
+
                 
                 # Enhanced damaged items section
                 if damaged:
@@ -1454,27 +1762,32 @@ else:
                     for item in damaged:
                         lot = item['lot']
                         po_number = st.session_state.lot_po_mapping.get(lot, "Not Found")
-                        
+                        details = item.get('details', {})
+                        po_details = details.get('po_details', {}) if details else {}
+
                         if lot in st.session_state.processed_lots:
                             status = '✅ Return Processed'
-                            status_color = '#28a745'
                         elif lot in st.session_state.approved_lots:
                             status = '📝 Approved for Return'
-                            status_color = '#007bff'
                         elif lot in st.session_state.rejected_lots:
                             status = '❌ Rejected for Return'
-                            status_color = '#dc3545'
                         else:
                             status = '⏳ Pending Action'
-                            status_color = '#ffc107'
-                            
+
                         damaged_data.append({
                             'Lot/Serial': lot,
                             'Location': item['location'],
                             'PO Number': po_number,
-                            'Status': status
+                            'Status': status,
+                            'Reference': details.get('reference', 'N/A') if details else 'N/A',
+                            'Product': details.get('product_name', 'N/A') if details else 'N/A',
+                            'SKU': details.get('sku', 'N/A') if details else 'N/A',
+                            'Vendor': po_details.get('vendor', 'N/A') if po_details else 'N/A',
+                            'Price': f"${po_details.get('price_unit', 0):.2f}",
+                            'Discount': f"{po_details.get('discount', 0)}%" if po_details.get('discount', 0) else "0%",
+                            'Cost Price': f"${po_details.get('cost_price', 0):.2f}",
                         })
-                    
+
                     damaged_df = pd.DataFrame(damaged_data)
                     st.dataframe(damaged_df, use_container_width=True, height=400)
                     
@@ -1492,33 +1805,56 @@ else:
                         
                         # Selection controls
                         col1, col2 = st.columns([2, 1])
-                        
+
                         with col1:
-                            # Select all checkbox
+                            # Select all checkbox with proper session state handling
+                            if "select_all_damaged" not in st.session_state:
+                                st.session_state.select_all_damaged = False
+
+                            # Handle select all logic
                             select_all = st.checkbox(
                                 f"🔘 Select All ({len(pending_lots)} items)", 
-                                value=st.session_state.select_all_damaged, 
-                                key="select_all_damaged"
+                                value=st.session_state.select_all_damaged,
+                                key="select_all_damaged_checkbox"
                             )
 
-                            if select_all:
-                                st.session_state.selected_damaged_lots = pending_lots.copy()
+                            # Update session state when checkbox changes
+                            if select_all != st.session_state.select_all_damaged:
+                                st.session_state.select_all_damaged = select_all
+                                if select_all:
+                                    st.session_state.selected_damaged_lots = pending_lots.copy()
+                                else:
+                                    st.session_state.selected_damaged_lots = []
+                                st.rerun()
+
+                            # Apply select all state to the multiselect
+                            if st.session_state.select_all_damaged:
+                                default_selection = pending_lots
                             else:
-                                st.session_state.selected_damaged_lots = []
-                        
+                                default_selection = st.session_state.selected_damaged_lots
+
                         with col2:
                             st.markdown(f"**Selected:** {len(st.session_state.selected_damaged_lots)}")
-                        
+
                         # Multi-select for specific items
                         selected_lots = st.multiselect(
                             "🎯 Select specific lots for action:",
                             options=pending_lots,
-                            default=st.session_state.selected_damaged_lots,
+                            default=default_selection,
                             key="damaged_lots_select",
                             help="Choose individual items or use 'Select All' above"
                         )
-                        
-                        st.session_state.selected_damaged_lots = selected_lots
+
+                        # Update session state when selection changes
+                        if selected_lots != st.session_state.selected_damaged_lots:
+                            st.session_state.selected_damaged_lots = selected_lots
+                            # If all items are selected, check the select all box
+                            if set(selected_lots) == set(pending_lots) and pending_lots:
+                                st.session_state.select_all_damaged = True
+                            elif st.session_state.select_all_damaged:
+                                st.session_state.select_all_damaged = False
+                            st.rerun()
+
                         
                         if st.session_state.selected_damaged_lots:
                             st.info(f"💡 {len(st.session_state.selected_damaged_lots)} item(s) selected for action")
@@ -1618,6 +1954,7 @@ else:
                                                     'status': 'Return Processed',
                                                     'po_number': result['results'][lot].get('po_number', 'N/A'),
                                                     'new_picking_id': result['results'][lot].get('new_picking_id', 'N/A'),
+                                                    'returned_reference': result['results'][lot].get('returned_reference', 'N/A'),  # ✅ Added
                                                     'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                                                 }
                                                 processed_count += 1
@@ -1663,6 +2000,7 @@ else:
                         processed_data.append({
                             'Lot/Serial': lot,
                             'PO Number': details.get('po_number', 'N/A'),
+                            'Returned Reference': details.get('returned_reference', 'N/A'),  # ✅ Added
                             'Picking ID': details.get('new_picking_id', 'N/A'),
                             'Status': '✅ Completed',
                             'Processed Time': details.get('timestamp', 'N/A')
@@ -1672,6 +2010,7 @@ else:
                     
                     with st.expander(f"📋 View Processed Returns ({len(processed_data)} items)", expanded=False):
                         st.dataframe(processed_df, use_container_width=True)
+
                 
                 # Enhanced report download section
                 st.markdown("---")
@@ -1691,12 +2030,16 @@ else:
                     
                     # Enhanced download button
                     st.download_button(
-                        label="📥 Download Excel Report",
-                        data=excel_data,
+                        label="⬇️ Download Excel Report",
+                        data=create_excel_report(
+                            non_damaged, damaged,
+                            st.session_state.approved_lots,
+                            st.session_state.rejected_lots,
+                            st.session_state.processed_lots
+                        ),
                         file_name=f"inventory_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        use_container_width=True,
-                        help="Download comprehensive Excel report with all data and analytics"
+                        use_container_width=True
                     )
                 
                 with col2:
