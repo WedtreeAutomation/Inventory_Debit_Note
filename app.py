@@ -801,7 +801,10 @@ def get_po_for_lot(lot_name):
         return f"Error: {str(e)}"
 
 def process_product_return(lot_serials):
-    """Process product returns grouped by (PO, product) with 0-qty products removed and validated pickings."""
+    """
+    Process product returns grouped by (PO, product).
+    ✅ Uses Damage/Stock as source location (like product_return.py).
+    """
     unique_lots = list(set(lot_serials))
     if not unique_lots:
         return False, "No Lot/Serial numbers entered."
@@ -837,6 +840,25 @@ def process_product_return(lot_serials):
         except Exception as e:
             results[lot] = {'success': False, 'message': f"Error preparing lot: {str(e)}"}
 
+    # Fetch company ID for filtering locations
+    company_id = st.session_state.models.execute_kw(
+        CONFIG['db'], st.session_state.uid, CONFIG['password'],
+        'res.company', 'search_read',
+        [[['name', '=', CONFIG['hq_company_name']]]],
+        {'fields': ['id'], 'limit': 1}
+    )[0]['id']
+
+    # Find Damage/Stock Location (same as product_return.py)
+    damage_location = st.session_state.models.execute_kw(
+        CONFIG['db'], st.session_state.uid, CONFIG['password'],
+        'stock.location', 'search_read',
+        [[['complete_name', 'ilike', 'Damge/Stock'], ['company_id', '=', company_id]]],
+        {'fields': ['id'], 'limit': 1}
+    )
+    if not damage_location:
+        return False, f"Damage location 'Damge/Stock' not found in Odoo!"
+    damage_location_id = damage_location[0]['id']
+
     # Process each (PO, product) group
     for (po_number, product_id), lots in lot_groups.items():
         try:
@@ -848,7 +870,7 @@ def process_product_return(lot_serials):
                 'stock.return.picking', 'create', [{'picking_id': picking_id}]
             )
 
-            # Adjust only the relevant wizard line
+            # Update wizard lines
             return_lines = st.session_state.models.execute_kw(
                 CONFIG['db'], st.session_state.uid, CONFIG['password'],
                 'stock.return.picking.line', 'search_read',
@@ -863,13 +885,12 @@ def process_product_return(lot_serials):
                         [[line['id']], {'quantity': len(lots)}]
                     )
                 else:
-                    # Remove unrelated products right here
                     st.session_state.models.execute_kw(
                         CONFIG['db'], st.session_state.uid, CONFIG['password'],
                         'stock.return.picking.line', 'unlink', [[line['id']]]
                     )
 
-            # Create return picking
+            # Confirm return → create return picking
             new_picking_info = st.session_state.models.execute_kw(
                 CONFIG['db'], st.session_state.uid, CONFIG['password'],
                 'stock.return.picking', 'create_returns', [wizard_id]
@@ -879,34 +900,36 @@ def process_product_return(lot_serials):
                 new_picking_id = new_picking_info['res_id']
             elif isinstance(new_picking_info, list) and new_picking_info:
                 new_picking_id = new_picking_info[0]
-
             if not new_picking_id:
                 for lot in lots:
                     results[lot] = {'success': False, 'message': "No return picking created"}
                 continue
 
-            # Fetch picking reference
-            picking_data = st.session_state.models.execute_kw(
+            # ✅ Force picking source to Damage/Stock
+            st.session_state.models.execute_kw(
                 CONFIG['db'], st.session_state.uid, CONFIG['password'],
-                'stock.picking', 'read', [new_picking_id], {'fields': ['name']}
+                'stock.picking', 'write',
+                [[new_picking_id], {'location_id': damage_location_id}]
             )
-            returned_reference = picking_data[0].get('name', 'N/A') if picking_data else 'N/A'
 
-            # Remove moves of products not in this group
-            all_moves = st.session_state.models.execute_kw(
+            # Update moves
+            moves = st.session_state.models.execute_kw(
                 CONFIG['db'], st.session_state.uid, CONFIG['password'],
                 'stock.move', 'search_read',
                 [[['picking_id', '=', new_picking_id]]],
                 {'fields': ['id', 'product_id']}
             )
-            for mv in all_moves:
-                if mv['product_id'][0] != product_id:
-                    st.session_state.models.execute_kw(
-                        CONFIG['db'], st.session_state.uid, CONFIG['password'],
-                        'stock.move', 'unlink', [[mv['id']]]
-                    )
+            product_move_map = {m['product_id'][0]: m['id'] for m in moves if m.get('product_id')}
+            for m in moves:
+                pid = m['product_id'][0]
+                qty = len(lot_groups.get((po_number, pid), []))
+                st.session_state.models.execute_kw(
+                    CONFIG['db'], st.session_state.uid, CONFIG['password'],
+                    'stock.move', 'write',
+                    [[m['id']], {'location_id': damage_location_id, 'product_uom_qty': qty}]
+                )
 
-            # Remove all move lines
+            # Clear existing move lines
             existing_ml = st.session_state.models.execute_kw(
                 CONFIG['db'], st.session_state.uid, CONFIG['password'],
                 'stock.move.line', 'search',
@@ -918,35 +941,31 @@ def process_product_return(lot_serials):
                     'stock.move.line', 'unlink', [existing_ml]
                 )
 
-            # Re-add correct move lines
-            moves = st.session_state.models.execute_kw(
-                CONFIG['db'], st.session_state.uid, CONFIG['password'],
-                'stock.move', 'search_read',
-                [[['picking_id', '=', new_picking_id], ['product_id', '=', product_id]]],
-                {'fields': ['id']}
-            )
-            move_id = moves[0]['id'] if moves else False
-
+            # Recreate move lines per lot
             for lot in lots:
                 move_line = lot_move_data[lot]
+                pid = move_line['product_id'][0]
+                move_id = product_move_map.get(pid)
+                if not move_id:
+                    continue
                 st.session_state.models.execute_kw(
                     CONFIG['db'], st.session_state.uid, CONFIG['password'],
                     'stock.move.line', 'create',
                     [{
                         'picking_id': new_picking_id,
                         'move_id': move_id,
-                        'product_id': product_id,
+                        'product_id': pid,
+                        'location_id': damage_location_id,
                         'lot_id': move_line['lot_id'][0],
                         'qty_done': 1,
                     }]
                 )
 
-            # Validate picking robustly
+            # ✅ Validate picking (with backorder/immediate wizard handling)
             validate_res = st.session_state.models.execute_kw(
                 CONFIG['db'], st.session_state.uid, CONFIG['password'],
                 'stock.picking', 'button_validate', [[new_picking_id]]
             )
-
             if isinstance(validate_res, dict) and validate_res.get('res_model') == 'stock.immediate.transfer':
                 wiz_ids = st.session_state.models.execute_kw(
                     CONFIG['db'], st.session_state.uid, CONFIG['password'],
@@ -958,7 +977,6 @@ def process_product_return(lot_serials):
                         CONFIG['db'], st.session_state.uid, CONFIG['password'],
                         'stock.immediate.transfer', 'process', [wiz_ids]
                     )
-
             elif isinstance(validate_res, dict) and validate_res.get('res_model') == 'stock.backorder.confirmation':
                 wiz_ids = st.session_state.models.execute_kw(
                     CONFIG['db'], st.session_state.uid, CONFIG['password'],
@@ -971,19 +989,27 @@ def process_product_return(lot_serials):
                         'stock.backorder.confirmation', 'process', [wiz_ids]
                     )
 
+            # Success
+            picking_data = st.session_state.models.execute_kw(
+                CONFIG['db'], st.session_state.uid, CONFIG['password'],
+                'stock.picking', 'read', [new_picking_id], {'fields': ['name']}
+            )
+            returned_reference = picking_data[0].get('name', 'N/A') if picking_data else 'N/A'
+
             for lot in lots:
                 results[lot] = {
                     'success': True,
                     'po_number': po_number,
                     'new_picking_id': new_picking_id,
                     'returned_reference': returned_reference,
-                    'message': f"Return processed → Picking {returned_reference} (Done)"
+                    'message': f"Return processed → Picking {returned_reference} (Source=Damage/Stock)"
                 }
 
         except Exception as e:
             for lot in lots:
-                results[lot] = {'success': False, 'message': f"Error processing group: {str(e)}"}
+                results[lot] = {'success': False, 'message': f"Error: {str(e)}"}
 
+    # Summary
     success_count = sum(1 for r in results.values() if r['success'])
     failure_count = len(results) - success_count
     overall_success = success_count > 0
