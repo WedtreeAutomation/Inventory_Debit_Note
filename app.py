@@ -1472,6 +1472,14 @@ with st.sidebar:
             for key in list(st.session_state.keys()):
                 del st.session_state[key]
             st.rerun()
+            
+        st.markdown("---")
+        st.header("🔗 Related Applications")
+        st.markdown("""
+        - [Inventory Debit Note](https://inventory-debit-note.streamlit.app/)
+        - [Lot Debit Note](https://lot-debit-note.streamlit.app/)
+        - [Lot Credit Note](https://lot-credit-note.streamlit.app/)
+        """)
         
         st.markdown("---")
         st.markdown('<h2 class="sidebar-header">🔗 Odoo Connection</h2>', unsafe_allow_html=True)
