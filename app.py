@@ -515,6 +515,60 @@ st.markdown("""
         color: #94a3b8;
         margin-top: 0.5rem;
     }
+    .app-button {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        border: none;
+        padding: 1rem;
+        border-radius: 12px;
+        font-size: 1rem;
+        font-weight: bold;
+        margin: 0.5rem 0;
+        width: 100%;
+        text-align: center;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0.5rem;
+    }
+    .app-button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 20px rgba(0,0,0,0.15);
+        background: linear-gradient(135deg, #764ba2 0%, #667eea 100%);
+    }
+    .app-button-inventory {
+        background: linear-gradient(135deg, #ff6b6b 0%, #ee5a24 100%);
+    }
+    .app-button-inventory:hover {
+        background: linear-gradient(135deg, #ee5a24 0%, #ff6b6b 100%);
+    }
+    .app-button-lot-debit {
+        background: linear-gradient(135deg, #00b894 0%, #00a085 100%);
+    }
+    .app-button-lot-debit:hover {
+        background: linear-gradient(135deg, #00a085 0%, #00b894 100%);
+    }
+    .app-button-lot-credit {
+        background: linear-gradient(135deg, #fdcb6e 0%, #f39c12 100%);
+    }
+    .app-button-lot-credit:hover {
+        background: linear-gradient(135deg, #f39c12 0%, #fdcb6e 100%);
+    }
+    .button-container {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+        margin: 1rem 0;
+    }
+    .button-icon {
+        font-size: 1.2rem;
+    }
+    a{
+        text-decoration: none !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -1475,11 +1529,41 @@ with st.sidebar:
             
         st.markdown("---")
         st.header("🔗 Related Applications")
-        st.markdown("""
-        - [Inventory Debit Note](https://inventory-debit-note.streamlit.app/)
-        - [Lot Debit Note](https://lot-debit-note.streamlit.app/)
-        - [Lot Credit Note](https://lot-credit-note.streamlit.app/)
-        """)
+            
+        # Attractive button links
+        st.markdown('<div class="button-container">', unsafe_allow_html=True)
+            
+        if st.markdown("""
+            <a href="https://inventory-debit-note.streamlit.app/" target="_blank">
+                <div class="app-button app-button-inventory">
+                    <span class="button-icon">📦</span>
+                    Inventory Debit Note
+                </div>
+            </a>
+        """, unsafe_allow_html=True):
+            pass
+    
+        if st.markdown("""
+            <a href="https://lot-debit-note.streamlit.app/" target="_blank">
+                <div class="app-button app-button-lot-debit">
+                    <span class="button-icon">🏷️</span>
+                    Lot Debit Note
+                </div>
+            </a>
+        """, unsafe_allow_html=True):
+            pass
+            
+        if st.markdown("""
+            <a href="https://lot-credit-note.streamlit.app/" target="_blank">
+                <div class="app-button app-button-lot-credit">
+                    <span class="button-icon">💰</span>
+                     Lot Credit Note
+                </div>
+            </a>
+          """, unsafe_allow_html=True):
+            pass
+    
+        st.markdown('</div>', unsafe_allow_html=True)
         
         st.markdown("---")
         st.markdown('<h2 class="sidebar-header">🔗 Odoo Connection</h2>', unsafe_allow_html=True)
