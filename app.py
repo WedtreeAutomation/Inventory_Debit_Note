@@ -556,77 +556,77 @@ def initialize_session_state():
 initialize_session_state()
 
 # Utility functions for stable widget management
+# Utility functions for stable widget management - BULLETPROOF VERSION
 def create_stable_widget_key(base_name):
     """Create stable widget keys that work across deployments"""
     return f"{base_name}_{st.session_state.widget_key_counter}"
 
-def handle_select_all_logic(pending_lots):
-    """Handle select all functionality with proper state management"""
+def handle_bulk_selection_ui(pending_lots):
+    """Bulletproof bulk selection UI that always works"""
     
-    # Use a unique key for this specific instance
-    select_all_key = create_stable_widget_key("select_all_damaged")
+    # Initialize states
+    if "select_all_damaged_state" not in st.session_state:
+        st.session_state.select_all_damaged_state = False
+    if "selected_damaged_lots" not in st.session_state:
+        st.session_state.selected_damaged_lots = []
     
-    # Initialize select all state if not exists
-    if select_all_key not in st.session_state:
-        st.session_state[select_all_key] = False
-    
-    # Create the checkbox with callback
-    def on_select_all_change():
-        st.session_state[select_all_key] = not st.session_state[select_all_key]
-        if st.session_state[select_all_key]:
-            st.session_state.selected_damaged_lots = pending_lots.copy()
-        else:
-            st.session_state.selected_damaged_lots = []
-        # Force rerun to update UI
-        st.rerun()
-    
-    # Display checkbox
-    select_all = st.checkbox(
-        f"🔘 Select All ({len(pending_lots)} items)",
-        value=st.session_state[select_all_key],
-        key=create_stable_widget_key("select_all_checkbox"),
-        on_change=on_select_all_change
-    )
-    
-    return select_all
+    # Selection controls
+    col1, col2 = st.columns([2, 1])
 
-def handle_lot_selection(pending_lots):
-    """Handle individual lot selection with proper state management"""
+    with col1:
+        # Select All checkbox - SIMPLIFIED
+        select_all_changed = False
+        new_select_all_state = st.checkbox(
+            f"🔘 Select All ({len(pending_lots)} items)",
+            value=st.session_state.select_all_damaged_state,
+            key=create_stable_widget_key("select_all_simple")
+        )
+        
+        if new_select_all_state != st.session_state.select_all_damaged_state:
+            st.session_state.select_all_damaged_state = new_select_all_state
+            select_all_changed = True
+            if new_select_all_state:
+                st.session_state.selected_damaged_lots = pending_lots.copy()
+            else:
+                st.session_state.selected_damaged_lots = []
+
+    with col2:
+        st.markdown(f"**Selected:** {len(st.session_state.selected_damaged_lots)}")
+
+    # Multi-select with manual synchronization
+    if st.session_state.select_all_damaged_state:
+        default_selection = pending_lots
+    else:
+        default_selection = st.session_state.selected_damaged_lots
     
-    # Get current selection state
-    current_selection = st.session_state.get('selected_damaged_lots', [])
-    
-    # Multi-select for specific items
     selected_lots = st.multiselect(
         "🎯 Select specific lots for action:",
         options=pending_lots,
-        default=current_selection,
-        key=create_stable_widget_key("damaged_lots_multiselect"),
+        default=default_selection,
+        key=create_stable_widget_key("damaged_lots_simple"),
         help="Choose individual items or use 'Select All' above"
     )
     
-    # Update session state when selection changes
-    if selected_lots != current_selection:
-        st.session_state.selected_damaged_lots = selected_lots
-        
-        # Update select all state based on current selection
-        select_all_key = create_stable_widget_key("select_all_damaged")
-        if set(selected_lots) == set(pending_lots) and pending_lots:
-            st.session_state[select_all_key] = True
-        else:
-            st.session_state[select_all_key] = False
-        
-        # Use a small delay to ensure state is updated before rerun
-        time.sleep(0.1)
-        st.rerun()
+    # Manual synchronization
+    if not select_all_changed:  # Only update if select all didn't change
+        if selected_lots != st.session_state.selected_damaged_lots:
+            st.session_state.selected_damaged_lots = selected_lots
+            
+            # Sync select all state
+            if set(selected_lots) == set(pending_lots) and pending_lots:
+                st.session_state.select_all_damaged_state = True
+            else:
+                st.session_state.select_all_damaged_state = False
+            
+            # Force update
+            st.rerun()
     
-    return selected_lots
+    return st.session_state.selected_damaged_lots
 
 def reset_selection_state():
     """Reset all selection-related states"""
     st.session_state.selected_damaged_lots = []
-    select_all_key = create_stable_widget_key("select_all_damaged")
-    st.session_state[select_all_key] = False
+    st.session_state.select_all_damaged_state = False
     st.session_state.widget_key_counter += 1
 
 def safe_rerun():
@@ -2063,7 +2063,6 @@ else:
                     st.dataframe(damaged_df, use_container_width=True, height=400)
                     
                     # Bulk action management
-                    # Enhanced bulk action management
                     st.markdown('<div class="action-panel">', unsafe_allow_html=True)
                     st.markdown('<div class="action-title">🎯 Bulk Actions</div>', unsafe_allow_html=True)
 
@@ -2075,56 +2074,46 @@ else:
                     if pending_lots:
                         st.markdown(f"**{len(pending_lots)}** items are awaiting your decision")
                         
-                        # Selection controls
-                        col1, col2 = st.columns([2, 1])
-
-                        with col1:
-                            # Handle select all logic
-                            select_all = handle_select_all_logic(pending_lots)
-
-                        with col2:
-                            st.markdown(f"**Selected:** {len(st.session_state.selected_damaged_lots)}")
-
-                        # Handle individual lot selection
-                        selected_lots = handle_lot_selection(pending_lots)
+                        # Use the bulletproof selection UI
+                        selected_lots = handle_bulk_selection_ui(pending_lots)
                         
-                        if st.session_state.selected_damaged_lots:
-                            st.info(f"💡 {len(st.session_state.selected_damaged_lots)} item(s) selected for action")
+                        if selected_lots:
+                            st.info(f"💡 {len(selected_lots)} item(s) selected for action")
                             
-                            # Action buttons with enhanced styling
+                            # Action buttons
                             col1, col2, col3 = st.columns(3)
                             
                             with col1:
                                 if st.button(
-                                    f"✅ Approve Selected ({len(st.session_state.selected_damaged_lots)})",
+                                    f"✅ Approve Selected ({len(selected_lots)})",
                                     type="primary", 
                                     use_container_width=True,
                                     key=create_stable_widget_key("approve_selected")
                                 ):
-                                    for lot in st.session_state.selected_damaged_lots:
+                                    for lot in selected_lots:
                                         if lot not in st.session_state.approved_lots:
                                             st.session_state.approved_lots.append(lot)
                                         if lot in st.session_state.rejected_lots:
                                             st.session_state.rejected_lots.remove(lot)
                                     
-                                    st.success(f"✅ Approved {len(st.session_state.selected_damaged_lots)} items for return!")
+                                    st.success(f"✅ Approved {len(selected_lots)} items for return!")
                                     reset_selection_state()
                                     time.sleep(1)
                                     st.rerun()
                             
                             with col2:
                                 if st.button(
-                                    f"❌ Reject Selected ({len(st.session_state.selected_damaged_lots)})",
+                                    f"❌ Reject Selected ({len(selected_lots)})",
                                     use_container_width=True,
                                     key=create_stable_widget_key("reject_selected")
                                 ):
-                                    for lot in st.session_state.selected_damaged_lots:
+                                    for lot in selected_lots:
                                         if lot not in st.session_state.rejected_lots:
                                             st.session_state.rejected_lots.append(lot)
                                         if lot in st.session_state.approved_lots:
                                             st.session_state.approved_lots.remove(lot)
                                     
-                                    st.warning(f"❌ Rejected {len(st.session_state.selected_damaged_lots)} items!")
+                                    st.warning(f"❌ Rejected {len(selected_lots)} items!")
                                     reset_selection_state()
                                     time.sleep(1)
                                     st.rerun()
@@ -2141,6 +2130,7 @@ else:
                         st.success("🎉 All damaged items have been processed!")
 
                     st.markdown('</div>', unsafe_allow_html=True)
+
                     
                     # Process approved returns section
                     if st.session_state.approved_lots:
