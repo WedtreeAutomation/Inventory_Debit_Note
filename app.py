@@ -1383,7 +1383,7 @@ def create_visualization_charts(non_damaged, damaged, approved, rejected, proces
         width=400,   # Added width constraint
         margin=dict(l=20, r=20, t=50, b=20),  # Tighter margins
         annotations=[dict(text='Total<br>Checked<br><b>' + str(total_checked) + '</b>', 
-                         x=0.5, y=0.5, font_size=12, showarrow=False)]  # Smaller annotation
+                          x=0.5, y=0.5, font_size=12, showarrow=False)]  # Smaller annotation
     )
     
     # Bar chart for workflow status (ORIGINAL SIZE)
@@ -1459,7 +1459,7 @@ def display_enhanced_metrics(non_damaged, damaged, approved, rejected, processed
     
     with col4:
         pending_count = len([item for item in damaged if item['lot'] not in approved and 
-                            item['lot'] not in rejected and item['lot'] not in processed])
+                             item['lot'] not in rejected and item['lot'] not in processed])
         st.markdown(f"""
         <div class="metric-card">
             <div class="metric-title">⏳ Pending Action</div>
@@ -1557,7 +1557,7 @@ with st.sidebar:
             <a href="https://lot-credit-note.streamlit.app/" target="_blank">
                 <div class="app-button app-button-lot-credit">
                     <span class="button-icon">💰</span>
-                     Lot Credit Note
+                    Lot Credit Note
                 </div>
             </a>
           """, unsafe_allow_html=True):
@@ -1773,7 +1773,7 @@ else:
                 
                 # Enhanced metrics display
                 display_enhanced_metrics(non_damaged, damaged, st.session_state.approved_lots, 
-                                       st.session_state.rejected_lots, st.session_state.processed_lots)
+                                        st.session_state.rejected_lots, st.session_state.processed_lots)
                 
                 # Interactive visualizations
                 if non_damaged or damaged:
@@ -1862,8 +1862,8 @@ else:
                     
                     # Get lots that are pending action
                     pending_lots = [item['lot'] for item in damaged if item['lot'] not in st.session_state.processed_lots and 
-                                   item['lot'] not in st.session_state.approved_lots and 
-                                   item['lot'] not in st.session_state.rejected_lots]
+                                     item['lot'] not in st.session_state.approved_lots and 
+                                     item['lot'] not in st.session_state.rejected_lots]
                     
                     if pending_lots:
                         st.markdown(f"**{len(pending_lots)}** items are awaiting your decision")
@@ -1872,54 +1872,31 @@ else:
                         col1, col2 = st.columns([2, 1])
 
                         with col1:
-                            # Select all checkbox with proper session state handling
-                            if "select_all_damaged" not in st.session_state:
-                                st.session_state.select_all_damaged = False
-
-                            # Handle select all logic
-                            select_all = st.checkbox(
-                                f"🔘 Select All ({len(pending_lots)} items)", 
-                                value=st.session_state.select_all_damaged,
-                                key="select_all_damaged_checkbox"
-                            )
-
-                            # Update session state when checkbox changes
-                            if select_all != st.session_state.select_all_damaged:
-                                st.session_state.select_all_damaged = select_all
-                                if select_all:
+                            # Select all checkbox with an on_change callback
+                            def update_selected_lots_from_checkbox():
+                                if st.session_state.select_all_damaged_checkbox:
                                     st.session_state.selected_damaged_lots = pending_lots.copy()
                                 else:
                                     st.session_state.selected_damaged_lots = []
-                                st.rerun()
-
-                            # Apply select all state to the multiselect
-                            if st.session_state.select_all_damaged:
-                                default_selection = pending_lots
-                            else:
-                                default_selection = st.session_state.selected_damaged_lots
-
+                            
+                            st.checkbox(
+                                f"🔘 Select All ({len(pending_lots)} items)", 
+                                value=st.session_state.select_all_damaged,
+                                key="select_all_damaged_checkbox",
+                                on_change=update_selected_lots_from_checkbox
+                            )
+                            
+                            # Multi-select for specific items
+                            st.session_state.selected_damaged_lots = st.multiselect(
+                                "🎯 Select specific lots for action:",
+                                options=pending_lots,
+                                default=st.session_state.selected_damaged_lots,
+                                key="damaged_lots_select",
+                                help="Choose individual items or use 'Select All' above"
+                            )
+                        
                         with col2:
                             st.markdown(f"**Selected:** {len(st.session_state.selected_damaged_lots)}")
-
-                        # Multi-select for specific items
-                        selected_lots = st.multiselect(
-                            "🎯 Select specific lots for action:",
-                            options=pending_lots,
-                            default=default_selection,
-                            key="damaged_lots_select",
-                            help="Choose individual items or use 'Select All' above"
-                        )
-
-                        # Update session state when selection changes
-                        if selected_lots != st.session_state.selected_damaged_lots:
-                            st.session_state.selected_damaged_lots = selected_lots
-                            # If all items are selected, check the select all box
-                            if set(selected_lots) == set(pending_lots) and pending_lots:
-                                st.session_state.select_all_damaged = True
-                            elif st.session_state.select_all_damaged:
-                                st.session_state.select_all_damaged = False
-                            st.rerun()
-
                         
                         if st.session_state.selected_damaged_lots:
                             st.info(f"💡 {len(st.session_state.selected_damaged_lots)} item(s) selected for action")
@@ -1943,7 +1920,7 @@ else:
                                     st.session_state.selected_damaged_lots = []
                                     time.sleep(1)
                                     st.rerun()
-                            
+                                
                             with col2:
                                 if st.button(
                                     f"❌ Reject Selected ({len(st.session_state.selected_damaged_lots)})",
@@ -1959,14 +1936,14 @@ else:
                                     st.session_state.selected_damaged_lots = []
                                     time.sleep(1)
                                     st.rerun()
-                            
+                                
                             with col3:
                                 if st.button("🔄 Clear Selection", use_container_width=True):
                                     st.session_state.selected_damaged_lots = []
                                     st.session_state.select_all_damaged = False
                                     st.rerun()
-                    else:
-                        st.success("🎉 All damaged items have been processed!")
+                        else:
+                            st.success("🎉 All damaged items have been processed!")
                     
                     st.markdown('</div>', unsafe_allow_html=True)
                     
@@ -2145,8 +2122,8 @@ else:
                     if st.button("🧹 Reset All Data", use_container_width=True):
                         # Clear all session data except authentication
                         keys_to_clear = ['inventory_results', 'damaged_lots', 'approved_lots', 
-                                    'rejected_lots', 'processed_lots', 'selected_damaged_lots', 
-                                    'lot_po_mapping']
+                                         'rejected_lots', 'processed_lots', 'selected_damaged_lots', 
+                                         'lot_po_mapping']
                         for key in keys_to_clear:
                             if key in st.session_state:
                                 if key == 'processed_lots':
