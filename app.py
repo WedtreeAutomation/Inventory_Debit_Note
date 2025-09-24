@@ -1872,18 +1872,14 @@ else:
                         col1, col2 = st.columns([2, 1])
                     
                         with col1:
-                            # Initialize select_all_damaged if not exists
-                            if "select_all_damaged" not in st.session_state:
-                                st.session_state.select_all_damaged = False
-                            
-                            # Create the select all checkbox
+                            # Create the select all checkbox - handle the change immediately
                             select_all = st.checkbox(
                                 f"🔘 Select All ({len(pending_lots)} items)", 
                                 value=st.session_state.select_all_damaged,
                                 key="select_all_damaged_checkbox"
                             )
                             
-                            # Update session state when checkbox changes
+                            # If select all state changed, update the selection immediately
                             if select_all != st.session_state.select_all_damaged:
                                 st.session_state.select_all_damaged = select_all
                                 if select_all:
@@ -1895,22 +1891,22 @@ else:
                         with col2:
                             st.markdown(f"**Selected:** {len(st.session_state.selected_damaged_lots)}")
                     
-                        # Determine default selection for multiselect
-                        if st.session_state.select_all_damaged:
-                            default_selection = pending_lots
-                        else:
-                            default_selection = st.session_state.selected_damaged_lots
+                        # Display the selected lots for transparency
+                        if st.session_state.selected_damaged_lots:
+                            with st.expander(f"📋 Selected Items ({len(st.session_state.selected_damaged_lots)})", expanded=False):
+                                for i, lot in enumerate(st.session_state.selected_damaged_lots, 1):
+                                    st.write(f"{i}. {lot}")
                     
-                        # Multi-select for specific items with a unique key
+                        # Multi-select for individual selection (but don't rely on it for select-all functionality)
                         selected_lots = st.multiselect(
-                            "🎯 Select specific lots for action:",
+                            "🎯 Select specific lots for action (optional):",
                             options=pending_lots,
-                            default=default_selection,
+                            default=st.session_state.selected_damaged_lots,
                             key="damaged_lots_multiselect",
-                            help="Choose individual items or use 'Select All' above"
+                            help="Use this to manually select/deselect individual items"
                         )
                     
-                        # Update session state when selection changes
+                        # Update session state when manual selection changes
                         if set(selected_lots) != set(st.session_state.selected_damaged_lots):
                             st.session_state.selected_damaged_lots = selected_lots
                             
@@ -1922,11 +1918,11 @@ else:
                             
                             st.rerun()
                         
-                        # Display action buttons only if there are selected lots
+                        # Display action buttons
                         if st.session_state.selected_damaged_lots:
                             st.info(f"💡 {len(st.session_state.selected_damaged_lots)} item(s) selected for action")
                             
-                            # Action buttons with enhanced styling
+                            # Action buttons
                             col1, col2, col3 = st.columns(3)
                             
                             with col1:
@@ -1943,6 +1939,7 @@ else:
                                             st.session_state.rejected_lots.remove(lot)
                                     
                                     st.success(f"✅ Approved {len(st.session_state.selected_damaged_lots)} items for return!")
+                                    # Clear selection after action
                                     st.session_state.selected_damaged_lots = []
                                     st.session_state.select_all_damaged = False
                                     time.sleep(1)
@@ -1961,6 +1958,7 @@ else:
                                             st.session_state.approved_lots.remove(lot)
                                     
                                     st.warning(f"❌ Rejected {len(st.session_state.selected_damaged_lots)} items!")
+                                    # Clear selection after action
                                     st.session_state.selected_damaged_lots = []
                                     st.session_state.select_all_damaged = False
                                     time.sleep(1)
@@ -1972,7 +1970,7 @@ else:
                                     st.session_state.select_all_damaged = False
                                     st.rerun()
                         else:
-                            st.info("💡 No items selected. Use the checkboxes above to select items for action.")
+                            st.info("💡 No items selected. Check 'Select All' or choose items manually.")
                             
                     else:
                         st.success("🎉 All damaged items have been processed!")
