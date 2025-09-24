@@ -1890,8 +1890,7 @@ else:
                                     st.session_state.selected_damaged_lots = pending_lots.copy()
                                 else:
                                     st.session_state.selected_damaged_lots = []
-                                # Use a different approach to avoid infinite rerun
-                                st.experimental_rerun()
+                                st.rerun()
                     
                         with col2:
                             st.markdown(f"**Selected:** {len(st.session_state.selected_damaged_lots)}")
@@ -1907,7 +1906,7 @@ else:
                             "🎯 Select specific lots for action:",
                             options=pending_lots,
                             default=default_selection,
-                            key="damaged_lots_multiselect",  # Changed key to be unique
+                            key="damaged_lots_multiselect",
                             help="Choose individual items or use 'Select All' above"
                         )
                     
@@ -1921,9 +1920,9 @@ else:
                             else:
                                 st.session_state.select_all_damaged = False
                             
-                            # Use rerun to refresh the UI
-                            st.experimental_rerun()
+                            st.rerun()
                         
+                        # Display action buttons only if there are selected lots
                         if st.session_state.selected_damaged_lots:
                             st.info(f"💡 {len(st.session_state.selected_damaged_lots)} item(s) selected for action")
                             
@@ -1935,7 +1934,7 @@ else:
                                     f"✅ Approve Selected ({len(st.session_state.selected_damaged_lots)})",
                                     type="primary", 
                                     use_container_width=True,
-                                    key="approve_selected"  # Added unique key
+                                    key="approve_selected"
                                 ):
                                     for lot in st.session_state.selected_damaged_lots:
                                         if lot not in st.session_state.approved_lots:
@@ -1947,13 +1946,13 @@ else:
                                     st.session_state.selected_damaged_lots = []
                                     st.session_state.select_all_damaged = False
                                     time.sleep(1)
-                                    st.experimental_rerun()
+                                    st.rerun()
                             
                             with col2:
                                 if st.button(
                                     f"❌ Reject Selected ({len(st.session_state.selected_damaged_lots)})",
                                     use_container_width=True,
-                                    key="reject_selected"  # Added unique key
+                                    key="reject_selected"
                                 ):
                                     for lot in st.session_state.selected_damaged_lots:
                                         if lot not in st.session_state.rejected_lots:
@@ -1965,13 +1964,16 @@ else:
                                     st.session_state.selected_damaged_lots = []
                                     st.session_state.select_all_damaged = False
                                     time.sleep(1)
-                                    st.experimental_rerun()
+                                    st.rerun()
                             
                             with col3:
                                 if st.button("🔄 Clear Selection", use_container_width=True, key="clear_selection"):
                                     st.session_state.selected_damaged_lots = []
                                     st.session_state.select_all_damaged = False
-                                    st.experimental_rerun()
+                                    st.rerun()
+                        else:
+                            st.info("💡 No items selected. Use the checkboxes above to select items for action.")
+                            
                     else:
                         st.success("🎉 All damaged items have been processed!")
                     
