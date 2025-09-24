@@ -1891,14 +1891,6 @@ else:
 
                 with col3:
                     st.markdown(f"**Selected:** {len(st.session_state.selected_damaged_lots)}")
-
-                # Multiselect
-                selected_lots = st.multiselect(
-                    "Select specific lots for action",
-                    options=pending_lots,
-                    default=st.session_state.selected_damaged_lots,
-                    key="damaged_lots_multiselect"
-                )
            
             if st.session_state.selected_damaged_lots:
               st.info(f"💡 {len(st.session_state.selected_damaged_lots)} item(s) selected for action")
