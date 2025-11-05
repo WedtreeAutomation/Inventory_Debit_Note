@@ -11,6 +11,8 @@ import io
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+from datetime import datetime
+import streamlit as st
 
 # Page configuration
 st.set_page_config(
@@ -603,6 +605,8 @@ if 'lot_details' not in st.session_state:
   st.session_state.lot_details = {}
 if 'lot_po_mapping' not in st.session_state:
   st.session_state.lot_po_mapping = {}
+if "process_clicked" not in st.session_state:
+    st.session_state.process_clicked = False
 
 def connect_to_odoo():
   """Connect to Odoo and store connection in session state"""
@@ -1954,79 +1958,92 @@ else:
             </div>
             """, unsafe_allow_html=True)
            
-            # Show approved items
-            with st.expander("📋 View Approved Items", expanded=False):
+          # --- Show Approved Items Section ---
+          with st.expander("📋 View Approved Items", expanded=False):
               approved_data = []
               for lot in st.session_state.approved_lots:
-                po_number = st.session_state.lot_po_mapping.get(lot, "Not Found")
-                approved_data.append({
-                  'Lot/Serial': lot,
-                  'PO Number': po_number,
-                  'Status': 'Approved for Return'
-                })
-             
+                  po_number = st.session_state.lot_po_mapping.get(lot, "Not Found")
+                  approved_data.append({
+                      'Lot/Serial': lot,
+                      'PO Number': po_number,
+                      'Status': 'Approved for Return'
+                  })
+          
               approved_df = pd.DataFrame(approved_data)
               st.dataframe(approved_df, use_container_width=True)
-           
-            col1, col2 = st.columns([2, 1])
-            with col1:
-              if st.button(
-                f"🚀 Process Returns for All Approved Lots ({len(st.session_state.approved_lots)})",
-                type="primary",
-                use_container_width=True
-              ):
-                with st.spinner("🔄 Processing returns... This may take a moment."):
-                  progress_bar = st.progress(0)
-                  status_text = st.empty()
-                 
-                  success, result = process_product_return(st.session_state.approved_lots)
-                 
-                  if success:
-                    # Update processed lots with individual results
-                    processed_count = 0
-                    for lot in st.session_state.approved_lots:
-                      if lot in result['results'] and result['results'][lot]['success']:
-                        # This is the correct way to add to a dictionary
-                        st.session_state.processed_lots[lot] = {
-                          'status': 'Return Processed',
-                          'po_number': result['results'][lot].get('po_number', 'N/A'),
-                          'new_picking_id': result['results'][lot].get('new_picking_id', 'N/A'),
-                          'returned_reference': result['results'][lot].get('returned_reference', 'N/A'),
-                          'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                        }
-                        processed_count += 1
-                   
-                    # Clear approved lots
-                    st.session_state.approved_lots = []
-                   
-                    # Show detailed results
-                    st.markdown(f"""
-                    <div class="status-card success-card">
-                      <h4>🎉 Processing Complete!</h4>
-                      <p><strong>✅ Successful:</strong> {result['success_count']} returns processed</p>
-                      <p><strong>❌ Failed:</strong> {result['failure_count']} returns failed</p>
-                    </div>
-                    """, unsafe_allow_html=True)
-                   
-                    if result['failure_count'] > 0:
-                      with st.expander("❌ View Failed Returns"):
-                        for lot, res in result['results'].items():
-                          if not res['success']:
-                            st.error(f"**{lot}:** {res['message']}")
-                   
-                    progress_bar.empty()
-                    status_text.empty()
-                    time.sleep(2)
-                    st.rerun()
+          
+          
+          # --- Process Returns Section ---
+          col1, col2 = st.columns([2, 1])
+          
+          with col1:
+              button_label = f"🚀 Process Returns for All Approved Lots ({len(st.session_state.approved_lots)})"
+              process_button = st.button(button_label, type="primary", use_container_width=True)
+          
+              if process_button:
+                  if st.session_state.get("process_clicked", False):
+                      st.error("⚠️ Return processing already initiated. Please wait or refresh.")
+                  elif not st.session_state.approved_lots:
+                      st.warning("No approved lots found to process.")
                   else:
-                    st.error(f"❌ Return processing failed: {result}")
-                    progress_bar.empty()
-                    status_text.empty()
-           
-            with col2:
+                      st.session_state.process_clicked = True  # ✅ Prevents double-clicks
+          
+                      with st.spinner("🔄 Processing returns... This may take a moment."):
+                          progress_bar = st.progress(0)
+                          status_text = st.empty()
+          
+                          # ✅ Call the actual processing function
+                          success, result = process_product_return(st.session_state.approved_lots)
+          
+                          if success:
+                              processed_count = 0
+                              for lot in st.session_state.approved_lots:
+                                  if lot in result['results'] and result['results'][lot]['success']:
+                                      st.session_state.processed_lots[lot] = {
+                                          'status': 'Return Processed',
+                                          'po_number': result['results'][lot].get('po_number', 'N/A'),
+                                          'new_picking_id': result['results'][lot].get('new_picking_id', 'N/A'),
+                                          'returned_reference': result['results'][lot].get('returned_reference', 'N/A'),
+                                          'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                                      }
+                                      processed_count += 1
+          
+                              # ✅ Clear approved lots after successful processing
+                              st.session_state.approved_lots = []
+          
+                              # ✅ Display summary results
+                              st.markdown(f"""
+                              <div class="status-card success-card">
+                                <h4>🎉 Processing Complete!</h4>
+                                <p><strong>✅ Successful:</strong> {result['success_count']} returns processed</p>
+                                <p><strong>❌ Failed:</strong> {result['failure_count']} returns failed</p>
+                              </div>
+                              """, unsafe_allow_html=True)
+          
+                              # ✅ Show failed results if any
+                              if result['failure_count'] > 0:
+                                  with st.expander("❌ View Failed Returns"):
+                                      for lot, res in result['results'].items():
+                                          if not res['success']:
+                                              st.error(f"**{lot}:** {res.get('message', 'No error message provided.')}")
+          
+                              progress_bar.empty()
+                              status_text.empty()
+                              time.sleep(2)
+                              st.rerun()
+          
+                          else:
+                              st.error(f"❌ Return processing failed: {result}")
+                              progress_bar.empty()
+                              status_text.empty()
+                              st.session_state.process_clicked = False  # allow retry if failure
+          
+          
+          with col2:
               if st.button("📋 View Details", use_container_width=True):
-                # This could expand to show more details
-                pass
+                  st.info("Details view coming soon.")
+
+          
        
         # Summary section with processed items
         if st.session_state.processed_lots:
