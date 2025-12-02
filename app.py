@@ -728,14 +728,17 @@ def get_product_details(lot_name):
       CONFIG['db'], st.session_state.uid, CONFIG['password'],
       'stock.quant', 'search_read',
       [[('lot_id.name', '=', lot_name)]],
-      {'fields': ['location_id']}
+      {'fields': ['location_id', 'quantity']}
     )
-   
+
     locations = []
+    available_qty = 0
+
     if quant_records:
       for q in quant_records:
         if q.get('location_id'):
           locations.append(q['location_id'][1])
+        available_qty += q.get('quantity', 0)
    
     product_name = product[0].get('name', 'Not Found')
     sku = product[0].get('default_code')
@@ -755,7 +758,9 @@ def get_product_details(lot_name):
       'reference': reference,
       'locations': locations,
       'discount': po_details.get('discount', 0) if po_details else 0,
-      'po_details': po_details
+      'po_details': po_details,
+      'available_qty': available_qty
+
     }
    
   except Exception as e:
@@ -781,45 +786,51 @@ def check_inventory(lot_serials):
    
     # Get detailed product information
     product_details = get_product_details(lot)
+
+# 🔥 Always store full details for later usage (Approved, Rejected, Processed)
+    if product_details:
+        st.session_state.lot_details[lot] = product_details
    
     quant_records = st.session_state.models.execute_kw(
-      CONFIG['db'], st.session_state.uid, CONFIG['password'],
-      'stock.quant', 'search_read',
-      [[('lot_id.name', '=', lot)]],
-      {'fields': ['lot_id', 'location_id']}
+        CONFIG['db'], st.session_state.uid, CONFIG['password'],
+        'stock.quant', 'search_read',
+        [[('lot_id.name', '=', lot)]],
+        {'fields': ['lot_id', 'location_id', 'quantity']}
     )
 
     if quant_records:
-      found_in_damage = any(q['location_id'][1] == CONFIG['damage_location_name'] for q in quant_records)
-     
-      # Get all locations for this lot
-      locations = {q['location_id'][1] for q in quant_records if q['location_id']}
-     
-      if not found_in_damage:
-        not_in_damage_stock.append({
-          'lot': lot,
-          'location': ", ".join(locations) if locations else "Unknown",
-          'status': 'Not in Damage',
-          'details': product_details
-        })
-      else:
-        in_damage_stock.append({
-          'lot': lot,
-          'location': CONFIG['damage_location_name'],
-          'status': 'In Damage',
-          'details': product_details
-        })
-       
-        # Store details in session state for later use
-        if product_details:
-          st.session_state.lot_details[lot] = product_details
+        # New condition → location must be 'Damge/Stock' AND qty > 0
+        found_in_damage = any(
+            q['location_id'][1] == CONFIG['damage_location_name'] and q.get('quantity', 0) > 0
+            for q in quant_records
+        )
+
+        # Get all locations
+        locations = {q['location_id'][1] for q in quant_records if q['location_id']}
+
+        if found_in_damage:
+            in_damage_stock.append({
+                'lot': lot,
+                'location': CONFIG['damage_location_name'],
+                'status': 'In Damage',
+                'details': product_details
+            })
+        else:
+            not_in_damage_stock.append({
+                'lot': lot,
+                'location': ", ".join(locations) if locations else "Unknown",
+                'status': 'Not in Damage',
+                'details': product_details
+            })
+
     else:
-      not_in_damage_stock.append({
-        'lot': lot,
-        'location': "Not Found in stock.quant",
-        'status': 'Not Found',
-        'details': product_details
-      })
+        not_in_damage_stock.append({
+            'lot': lot,
+            'location': "Not Found in stock.quant",
+            'status': 'Not Found',
+            'details': product_details
+        })
+
  
   progress_bar.empty()
   status_text.empty()
@@ -1162,18 +1173,20 @@ def create_excel_report(non_damaged, damaged, approved, rejected, processed):
         details = item.get('details', {})
         po_details = details.get('po_details', {}) if details else {}
        
-        non_damaged_data.append({
-          'lot': item['lot'],
-          'location': item['location'],
-          'status': item['status'],
-          'reference': details.get('reference', 'N/A') if details else 'N/A',
-          'product_name': details.get('product_name', 'N/A') if details else 'N/A',
-          'sku': details.get('sku', 'N/A') if details else 'N/A',
-          'vendor': po_details.get('vendor', 'N/A') if po_details else 'N/A',
-          'price_unit': po_details.get('price_unit', 0) if po_details else 0,
-          'discount': po_details.get('discount', 0) if po_details else 0,
-          'cost_price': po_details.get('cost_price', 0) if po_details else 0
-        })
+      non_damaged_data.append({
+          'Lot/Serial': item['lot'],
+          'Location': item['location'],
+          'Status': item['status'],
+          'Reference': details.get('reference', 'N/A'),
+          'Product': details.get('product_name', 'N/A'),
+          'SKU': details.get('sku', 'N/A'),
+          'Vendor': po_details.get('vendor', 'N/A'),
+          'Price': f"${po_details.get('price_unit', 0):.2f}",
+          'Discount': f"{po_details.get('discount', 0)}%",
+          'Cost Price': f"${po_details.get('cost_price', 0):.2f}",
+          'Available Qty': details.get('available_qty', 0),
+      })
+
      
       non_damaged_df = pd.DataFrame(non_damaged_data)
       non_damaged_df.to_excel(writer, sheet_name='Non-Damaged Items', index=False)
@@ -1215,7 +1228,8 @@ def create_excel_report(non_damaged, damaged, approved, rejected, processed):
           'vendor': po_details.get('vendor', 'N/A') if po_details else 'N/A',
           'price_unit': po_details.get('price_unit', 0) if po_details else 0,
           'discount': po_details.get('discount', 0) if po_details else 0,
-          'cost_price': po_details.get('cost_price', 0) if po_details else 0
+          'cost_price': po_details.get('cost_price', 0) if po_details else 0,
+          'Available Qty': details.get('available_qty', 0),
         })
      
       damaged_df = pd.DataFrame(damaged_data)
@@ -1283,7 +1297,8 @@ def create_excel_report(non_damaged, damaged, approved, rejected, processed):
           'vendor': po_details.get('vendor', 'N/A') if po_details else 'N/A',
           'price_unit': po_details.get('price_unit', 0) if po_details else 0,
           'discount': po_details.get('discount', 0) if po_details else 0,
-          'cost_price': po_details.get('cost_price', 0) if po_details else 0
+          'cost_price': po_details.get('cost_price', 0) if po_details else 0,
+          
         })
      
       approved_df = pd.DataFrame(approved_data)
@@ -1812,6 +1827,7 @@ else:
                 'Price': f"${po_details.get('price_unit', 0):.2f}",
                 'Discount': f"{po_details.get('discount', 0)}%" if po_details.get('discount', 0) else "0%",
                 'Cost Price': f"${po_details.get('cost_price', 0):.2f}",
+                'Available Qty': details.get('available_qty', 0),
               })
 
             non_damaged_df = pd.DataFrame(non_damaged_data)
@@ -1851,6 +1867,7 @@ else:
               'Price': f"${po_details.get('price_unit', 0):.2f}",
               'Discount': f"{po_details.get('discount', 0)}%" if po_details.get('discount', 0) else "0%",
               'Cost Price': f"${po_details.get('cost_price', 0):.2f}",
+              'Available Qty': details.get('available_qty', 0),
             })
 
           damaged_df = pd.DataFrame(damaged_data)
@@ -1960,11 +1977,12 @@ else:
               for lot in st.session_state.approved_lots:
                 po_number = st.session_state.lot_po_mapping.get(lot, "Not Found")
                 approved_data.append({
-                  'Lot/Serial': lot,
-                  'PO Number': po_number,
-                  'Status': 'Approved for Return'
+                    'Lot/Serial': lot,
+                    'PO Number': po_number,
+                    'Available Qty': st.session_state.lot_details.get(lot, {}).get('available_qty', 0),
+                    'Status': 'Approved for Return'
                 })
-             
+
               approved_df = pd.DataFrame(approved_data)
               st.dataframe(approved_df, use_container_width=True)
            
@@ -2040,7 +2058,8 @@ else:
               'Returned Reference': details.get('returned_reference', 'N/A'), # ✅ Added
               'Picking ID': details.get('new_picking_id', 'N/A'),
               'Status': '✅ Completed',
-              'Processed Time': details.get('timestamp', 'N/A')
+              'Processed Time': details.get('timestamp', 'N/A'),
+              'Available Qty': st.session_state.lot_details.get(lot, {}).get('available_qty', 0)
             })
          
           processed_df = pd.DataFrame(processed_data)
