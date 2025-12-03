@@ -1177,19 +1177,19 @@ def create_excel_report(non_damaged, damaged, approved, rejected, processed):
         details = item.get('details', {})
         po_details = details.get('po_details', {}) if details else {}
        
-      non_damaged_data.append({
-          'Lot/Serial': item['lot'],
-          'Location': item['location'],
-          'Status': item['status'],
-          'Reference': details.get('reference', 'N/A'),
-          'Product': details.get('product_name', 'N/A'),
-          'SKU': details.get('sku', 'N/A'),
-          'Vendor': po_details.get('vendor', 'N/A'),
-          'Price': f"${po_details.get('price_unit', 0):.2f}",
-          'Discount': f"{po_details.get('discount', 0)}%",
-          'Cost Price': f"${po_details.get('cost_price', 0):.2f}",
-          'Available Qty': details.get('available_qty', 0),
-      })
+        non_damaged_data.append({
+            'Lot/Serial': item['lot'],
+            'Location': item['location'],
+            'Status': item['status'],
+            'Reference': details.get('reference', 'N/A') if details else 'N/A',  # FIXED
+            'Product': details.get('product_name', 'N/A') if details else 'N/A',  # FIXED
+            'SKU': details.get('sku', 'N/A') if details else 'N/A',  # FIXED
+            'Vendor': po_details.get('vendor', 'N/A') if po_details else 'N/A',  # FIXED
+            'Price': f"${po_details.get('price_unit', 0):.2f}" if po_details else "$0.00",  # FIXED
+            'Discount': f"{po_details.get('discount', 0)}%" if po_details else "0%",  # FIXED
+            'Cost Price': f"${po_details.get('cost_price', 0):.2f}" if po_details else "$0.00",  # FIXED
+            'Available Qty': details.get('available_qty', 0) if details else 0,  # FIXED
+        })
 
      
       non_damaged_df = pd.DataFrame(non_damaged_data)
@@ -1223,17 +1223,17 @@ def create_excel_report(non_damaged, damaged, approved, rejected, processed):
           status = 'Pending Action'
          
         damaged_data.append({
-          'lot': lot,
-          'location': item['location'],
-          'status': status,
-          'reference': details.get('reference', 'N/A') if details else 'N/A',
-          'product_name': details.get('product_name', 'N/A') if details else 'N/A',
-          'sku': details.get('sku', 'N/A') if details else 'N/A',
-          'vendor': po_details.get('vendor', 'N/A') if po_details else 'N/A',
-          'price_unit': po_details.get('price_unit', 0) if po_details else 0,
-          'discount': po_details.get('discount', 0) if po_details else 0,
-          'cost_price': po_details.get('cost_price', 0) if po_details else 0,
-          'Available Qty': details.get('available_qty', 0),
+            'lot': lot,
+            'location': item['location'],
+            'status': status,
+            'reference': details.get('reference', 'N/A') if details else 'N/A',
+            'product_name': details.get('product_name', 'N/A') if details else 'N/A',
+            'sku': details.get('sku', 'N/A') if details else 'N/A',
+            'vendor': po_details.get('vendor', 'N/A') if po_details else 'N/A',
+            'price_unit': po_details.get('price_unit', 0) if po_details else 0,
+            'discount': po_details.get('discount', 0) if po_details else 0,
+            'cost_price': po_details.get('cost_price', 0) if po_details else 0,
+            'Available Qty': details.get('available_qty', 0) if details else 0,  # FIXED THIS LINE
         })
      
       damaged_df = pd.DataFrame(damaged_data)
@@ -1258,15 +1258,15 @@ def create_excel_report(non_damaged, damaged, approved, rejected, processed):
        
         processed_data.append({
           'lot': lot,
-          'po_number': details.get('po_number', 'N/A'),
-          'picking_id': details.get('new_picking_id', 'N/A'),
+          'po_number': details.get('po_number', 'N/A') if details else 'N/A',  # FIXED
+          'picking_id': details.get('new_picking_id', 'N/A') if details else 'N/A',  # FIXED
           'status': 'Return Processed',
-          'timestamp': details.get('timestamp', 'N/A'),
+          'timestamp': details.get('timestamp', 'N/A') if details else 'N/A',  # FIXED
           'product_name': lot_details.get('product_name', 'N/A') if lot_details else 'N/A',
           'sku': lot_details.get('sku', 'N/A') if lot_details else 'N/A',
           'vendor': po_details.get('vendor', 'N/A') if po_details else 'N/A',
           'reference': lot_details.get('reference', 'N/A') if lot_details else 'N/A',
-          'returned_reference': details.get('returned_reference', 'N/A'),
+          'returned_reference': details.get('returned_reference', 'N/A') if details else 'N/A',  # FIXED
           'price_unit': po_details.get('price_unit', 0) if po_details else 0,
           'discount': po_details.get('discount', 0) if po_details else 0,
           'cost_price': po_details.get('cost_price', 0) if po_details else 0
@@ -1831,7 +1831,7 @@ else:
                 'Price': f"${po_details.get('price_unit', 0):.2f}",
                 'Discount': f"{po_details.get('discount', 0)}%" if po_details.get('discount', 0) else "0%",
                 'Cost Price': f"${po_details.get('cost_price', 0):.2f}",
-                'Available Qty': details.get('available_qty', 0),
+                'Available Qty': details.get('available_qty', 0) if details else 0,
               })
 
             non_damaged_df = pd.DataFrame(non_damaged_data)
@@ -1871,7 +1871,7 @@ else:
               'Price': f"${po_details.get('price_unit', 0):.2f}",
               'Discount': f"{po_details.get('discount', 0)}%" if po_details.get('discount', 0) else "0%",
               'Cost Price': f"${po_details.get('cost_price', 0):.2f}",
-              'Available Qty': details.get('available_qty', 0),
+              'Available Qty': details.get('available_qty', 0) if details else 0,
             })
 
           damaged_df = pd.DataFrame(damaged_data)
@@ -2071,9 +2071,9 @@ else:
           for lot, details in st.session_state.processed_lots.items():
             processed_data.append({
               'Lot/Serial': lot,
-              'PO Number': details.get('po_number', 'N/A'),
-              'Returned Reference': details.get('returned_reference', 'N/A'), # ✅ Added
-              'Picking ID': details.get('new_picking_id', 'N/A'),
+              'PO Number': details.get('po_number', 'N/A') if details else 'N/A', 
+              'Returned Reference': details.get('returned_reference', 'N/A') if details else 'N/A',
+              'Picking ID': details.get('new_picking_id', 'N/A') if details else 'N/A',
               'Status': '✅ Completed',
               'Processed Time': details.get('timestamp', 'N/A'),
               'Available Qty': st.session_state.lot_details.get(lot, {}).get('available_qty', 0)
@@ -2102,6 +2102,11 @@ else:
             st.session_state.rejected_lots,
             st.session_state.processed_lots
           )
+          # Right before the download section, add:
+          # st.write(f"Debug - Total approved lots: {len(st.session_state.approved_lots)}")
+          # st.write(f"Debug - Approved lots list: {st.session_state.approved_lots}")
+          # st.write(f"Debug - Total processed lots: {len(st.session_state.processed_lots)}")
+          # st.write(f"Debug - Total rejected lots: {len(st.session_state.rejected_lots)}")
          
           # Enhanced download button
           st.download_button(
